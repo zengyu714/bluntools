@@ -60,10 +60,10 @@ class UpConcat(nn.Module):
 class DownBlock(nn.Module):
     """Reference: https://arxiv.org/pdf/1709.00201.pdf"""
 
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, ceil_mode=True):
         super(DownBlock, self).__init__()
         self.conv = nn.Sequential(ConvBNReLU(in_channels, in_channels), ConvBNReLU(in_channels, in_channels))
-        self.pool = nn.Sequential(ConvBNReLU(in_channels, out_channels), nn.MaxPool2d(2, stride=2, ceil_mode=True))
+        self.pool = nn.Sequential(ConvBNReLU(in_channels, out_channels), nn.MaxPool2d(2, stride=2, ceil_mode=ceil_mode))
 
     def forward(self, x):
         conv = self.conv(x) + x
@@ -202,16 +202,17 @@ class NLLLoss(nn.Module):
 
 
 class DiceLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, weight=1):
         super(DiceLoss, self).__init__()
+        self.w = weight * weight
 
     def forward(self, probs, trues):
         loss = []
         smooth = 1.  # (dim = )0 for Tensor result
         for i, prob in enumerate(probs):
             true = trues[i]
-            intersection = torch.sum(prob * true, 0) + smooth
-            union = torch.sum(prob * prob, 0) + torch.sum(true * true, 0) + smooth
+            intersection = torch.sum(self.w * prob * true, 0) + smooth
+            union = torch.sum(self.w * prob * prob, 0) + torch.sum(self.w * true * true, 0) + smooth
             dice = 2.0 * intersection / union
             loss.append(1 - dice)
         return sum(loss)
@@ -338,17 +339,17 @@ def get_statistic(pred, true):
     Returns:
         tuple contains:
         + accuracy: (pred ∩ true) / true
-        + dice overlap:  2 * pred ∩ true / (pred ∪ true) * 100
+        + mIOU:  pred ∩ true / (pred ∪ true) * 100
     """
 
     # Dice overlap
-    pred = pred.eq(1).float().data  # FloatTensor 0.0 / 1.0
-    true = true.data  # FloatTensor 0.0 / 1.0
-    overlap = 2 * (pred * true).sum() / (pred.sum() + true.sum()) * 100
+    pred = pred.eq(1).byte().data  # FloatTensor 0.0 / 1.0
+    true = true.byte().data  # FloatTensor 0.0 / 1.0
+    mIOU = (pred & true).sum() / (pred | true).sum() * 100
 
     # Accuracy
     acc = pred.eq(true).float().mean() * 100
-    return acc, overlap
+    return acc, mIOU
 
 
 def pre_visdom(image, label, pred, show_size=256):
